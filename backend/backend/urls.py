@@ -21,6 +21,5 @@ from mails import views
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('index/', views.index, name='index'),
-    
-    
+    path('emails/scan/', views.EmailAgentScanView.as_view(), name='emails-scan'),
 ]
