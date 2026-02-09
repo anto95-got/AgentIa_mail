@@ -1,21 +1,33 @@
 import { getApiUrl } from './config.js';
 
 /**
- * Récupère les mails non lus depuis le backend Django
- * @returns {Promise<Array>} Liste des mails non lus
+ * Récupère les mails non lus depuis le backend Django (emails/scan/)
+ * @param {Object} credentials - { email, password, host? }
+ * @returns {Promise<Array>} Liste des mails
  */
-export async function getUnreadMails() {
-  const url = ('https://127.0.1:8000/'); // getApiUrl('emails/scan/');
-  const response = await fetch(url+"emails/scan/", {
-    method: 'GET',
+export async function getUnreadMails(credentials = {}) {
+  const url = getApiUrl('/emails/scan/');
+  const body = credentials.email && credentials.password
+    ? JSON.stringify({
+        email: credentials.email,
+        password: credentials.password,
+        host: credentials.host || 'imap.gmail.com',
+      })
+    : undefined;
+
+  const response = await fetch(url, {
+    method: body ? 'POST' : 'GET',
     headers: {
+      Accept: 'application/json',
       'Content-Type': 'application/json',
     },
-    
+    ...(body && { body }),
   });
 
   if (!response.ok) {
-    throw new Error(`Erreur ${response.status}: ${response.statusText}`);
+    const errData = await response.json().catch(() => ({}));
+    const message = errData.error || `Erreur ${response.status}: ${response.statusText}`;
+    throw new Error(message);
   }
 
   const data = await response.json();
