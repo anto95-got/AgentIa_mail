@@ -1,86 +1,85 @@
-import os
-
-from django.shortcuts import render
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
-from imap_tools import MailBox, AND
+import os, json
+from django.shortcuts import render, redirect
+from django.contrib.auth import login, logout
+from django.contrib.auth.models import User
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
+from rest_framework.decorators import api_view
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
 
-
+# Force la bibliothèque à accepter le changement de format des scopes de Google
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+def get_google_flow():
+    return Flow.from_client_secrets_file(
+        'client_secret.json',
+        scopes=['https://www.googleapis.com/auth/gmail.modify', 'openid', 'email', 'profile'],
+        redirect_uri='http://localhost:8000/api/auth/callback/'
+    )
 def index(request):
-    return render(request, "index.html")
+    return render(request, "index.html", {
+        'is_dev': settings.DEBUG,
+        'vite_url': "http://localhost:5173"
+    })
+def google_login(request):
+    flow = get_google_flow()
+    auth_url, _ = flow.authorization_url(prompt='consent')
+    return redirect(auth_url)
 
+def google_callback(request):
+    flow = get_google_flow()
+    flow.fetch_token(authorization_response=request.build_absolute_uri().replace('http:', 'https:'))
+    creds = flow.credentials
+    user_info = build('oauth2', 'v2', credentials=creds).userinfo().get().execute()
+    
+    user, _ = User.objects.get_or_create(username=user_info['email'], defaults={'email': user_info['email'], 'first_name': user_info.get('given_name','')})
+    login(request, user)
+    request.session['google_token'] = creds.to_json()
+    request.session.save()
+    return redirect('http://localhost:8000/')
 
-def _get_credentials(request):
-    imap_host = os.getenv("IMAP_HOST", "imap.gmail.com")
-    imap_email = os.getenv("IMAP_EMAIL")
-    imap_password = os.getenv("IMAP_APP_PASSWORD")
+@api_view(['GET'])
+def get_user_profile(request):
+    if request.user.is_authenticated:
+        return Response({"is_logged_in": True, "full_name": request.user.first_name, "email": request.user.email})
+    return Response({"is_logged_in": False})
 
-    if request.method == "POST" and request.data:
-        data = request.data
-        imap_email = data.get("email") or imap_email
-        imap_password = data.get("password") or imap_password
-        imap_host = data.get("host") or imap_host
+@api_view(['POST'])
+def google_logout(request):
+    logout(request)
+    return Response({"status": "ok"})
 
-    return imap_host, imap_email, imap_password
-
-
-def _scan_and_return_emails(imap_host, imap_email, imap_password):
-    result = []
-    with MailBox(imap_host).login(imap_email, imap_password) as mailbox:
-        for msg in mailbox.fetch(AND(seen=False), reverse=True):
-            subject = (msg.subject or "").strip()
-            body = (msg.text or msg.html or "").strip()[:500]
-            sender = str(msg.from_) if msg.from_ else ""
-            result.append({
-                "id": msg.uid,
-                "subject": subject,
-                "sender": sender,
-                "body": body,
-                "date_received": msg.date.isoformat() if msg.date else None,
-            })
-            if len(result) >= 3:
-                break
-    return result
-
-
-@method_decorator(csrf_exempt, name="dispatch")
-class EmailAgentScanView(APIView):
+class GmailScannerView(APIView):
     def get(self, request):
-        imap_host, imap_email, imap_password = _get_credentials(request)
-        if not imap_email or not imap_password:
-            return Response(
-                {
-                    "error": (
-                        "Identifiants manquants. Connectez-vous via le formulaire ou "
-                        "configurez IMAP_EMAIL et IMAP_APP_PASSWORD."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            data = _scan_and_return_emails(imap_host, imap_email, imap_password)
-            return Response(data)
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-    def post(self, request):
-        imap_host, imap_email, imap_password = _get_credentials(request)
-        if not imap_email or not imap_password:
-            return Response(
-                {"error": "Email et mot de passe requis."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            data = _scan_and_return_emails(imap_host, imap_email, imap_password)
-            return Response(data)
-        except Exception as e:
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+        token = request.session.get('google_token')
+        if not token: return Response({"error": "Unauthorized"}, status=401)
+        service = build('gmail', 'v1', credentials=Credentials.from_authorized_user_info(json.loads(token)))
+        results = service.users().messages().list(userId='me', maxResults=10).execute()
+        mail_list = []
+        for msg in results.get('messages', []):
+            m = service.users().messages().get(userId='me', id=msg['id']).execute()
+            headers = m['payload']['headers']
+            mail_list.append({
+                "id": msg['id'],
+                "subject": next((h['value'] for h in headers if h['name'] == 'Subject'), "Sans objet"),
+                "sender": next((h['value'] for h in headers if h['name'] == 'From'), "Inconnu"),
+                "snippet": m.get('snippet', '')
+            })
+        return Response(mail_list)
+    
+def get_google_flow():
+    """Configure le flux Google avec les scopes exacts attendus par l'API."""
+    secret_path = os.path.join(settings.BASE_DIR, 'client_secret.json')
+    
+    return Flow.from_client_secrets_file(
+        secret_path,
+        scopes=[
+            'https://www.googleapis.com/auth/gmail.modify',
+            'https://www.googleapis.com/auth/userinfo.email',   # Format complet
+            'https://www.googleapis.com/auth/userinfo.profile', # Format complet
+            'openid'
+        ],
+        redirect_uri='http://localhost:8000/api/auth/callback/'
+    )

@@ -1,171 +1,123 @@
-import { useState } from 'react'
-import { getUnreadMails } from '../api'
+import { useState, useEffect } from 'react'
 
 export default function Accueil() {
+  const [user, setUser] = useState(null)
   const [mails, setMails] = useState([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const [showModal, setShowModal] = useState(false)
-  const [formData, setFormData] = useState({ email: '', password: '' })
   const [hasSearched, setHasSearched] = useState(false)
 
-  const openModal = () => setShowModal(true)
-  const closeModal = () => {
-    setShowModal(false)
-    setError(null)
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    setLoading(true)
-    setError(null)
-
-    try {
-      const data = await getUnreadMails({
-        email: formData.email,
-        password: formData.password,
-        host: 'imap.gmail.com',
+  // 1. Vérification de la session au chargement
+  useEffect(() => {
+    fetch('http://localhost:8000/api/user/me/', { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => {
+        if (data.is_logged_in) {
+          setUser(data)
+        }
       })
+      .catch(err => console.error("Erreur de session:", err))
+  }, [])
+
+  // 2. Action : Scanner Gmail
+  const handleScan = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('http://localhost:8000/api/gmail/scan/', { credentials: 'include' })
+      if (!res.ok) throw new Error("Erreur serveur")
+      const data = await res.json()
       setMails(data)
       setHasSearched(true)
-      closeModal()
     } catch (err) {
-      setError(err.message)
-      setMails([])
+      console.error("Erreur scan:", err)
+      alert("Impossible de récupérer les mails.")
     } finally {
       setLoading(false)
     }
   }
 
-  const formatDate = (dateStr) => {
-    if (!dateStr) return '-'
-    try {
-      const d = new Date(dateStr)
-      return d.toLocaleDateString('fr-FR', {
-        dateStyle: 'short',
-        timeStyle: 'short',
-      })
-    } catch {
-      return dateStr
-    }
+  // 3. Action : Déconnexion
+  const handleLogout = () => {
+    fetch('http://localhost:8000/api/auth/logout/', { 
+      method: 'POST', 
+      credentials: 'include' 
+    }).then(() => {
+        // On redirige vers l'accueil pour nettoyer l'état proprement
+        window.location.href = 'http://localhost:8000/';
+    })
   }
 
   return (
-    <main className="accueil">
-      <div className="accueil-content">
-        <div className="hero-section">
-          <h1 className="accueil-title">Vos e-mails non lus</h1>
-          <p className="accueil-subtitle">
-            Cliquez pour vous connecter et récupérer vos derniers messages
-          </p>
+    <div className="container" style={{ maxWidth: '900px', margin: '0 auto', padding: '40px 20px' }}>
+      
+      {/* HEADER SECTION */}
+      <header style={{ textAlign: 'center', marginBottom: '40px' }}>
+        <h1 style={{ fontSize: '2.5rem', color: '#333' }}>
+          {user ? `Bienvenue, ${user.full_name} 👋` : 'Agent IA Scanner'}
+        </h1>
+        <p style={{ color: '#666' }}>
+          {user ? `Connecté avec ${user.email}` : 'Veuillez vous connecter pour analyser vos emails'}
+        </p>
 
-          <button
-            className="fetch-button"
-            onClick={openModal}
-            disabled={loading}
-          >
-            <span className="fetch-button-icon">📬</span>
-            Récupérer les mails non lus
-          </button>
-        </div>
-
-        {(mails.length > 0 || hasSearched) && (
-          <div className="mails-section">
-            <h2 className="mails-list-title">
-              {mails.length > 0
-                ? `${mails.length} mail${mails.length > 1 ? 's' : ''} trouvé${mails.length > 1 ? 's' : ''}`
-                : 'Aucun mail non lu'}
-            </h2>
-            {mails.length > 0 ? (
-            <div className="mails-table-wrapper">
-              <table className="mails-table">
-                <thead>
-                  <tr>
-                    <th>Expéditeur</th>
-                    <th>Sujet</th>
-                    <th>Date</th>
-                    <th>Aperçu</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mails.map((mail) => (
-                    <tr key={mail.id || mail.subject}>
-                      <td className="mail-sender">{mail.sender || mail.from}</td>
-                      <td className="mail-subject">{mail.subject || 'Sans objet'}</td>
-                      <td className="mail-date">
-                        {formatDate(mail.date_received || mail.date)}
-                      </td>
-                      <td className="mail-body">
-                        {(mail.body || mail.snippet || '').slice(0, 80)}
-                        {(mail.body || mail.snippet || '').length > 80 ? '…' : ''}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            ) : (
-              <p className="mails-empty">Aucun message non lu dans votre boîte mail.</p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {showModal && (
-        <div className="modal-overlay" onClick={closeModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={closeModal} aria-label="Fermer">
-              ×
+        <div style={{ marginTop: '20px' }}>
+          {!user ? (
+            <button 
+              onClick={() => window.location.href='http://localhost:8000/api/auth/login/'}
+              style={{ padding: '12px 24px', fontSize: '16px', backgroundColor: '#4285F4', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+            >
+              Se connecter avec Google
             </button>
-            <h2 className="modal-title">Connexion IMAP</h2>
-            <p className="modal-subtitle">
-              Entrez vos identifiants pour récupérer vos mails non lus
-            </p>
-            <form onSubmit={handleSubmit} className="modal-form">
-              <div className="form-group">
-                <label htmlFor="email">Email</label>
-                <input
-                  id="email"
-                  type="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="votre@email.com"
-                  required
-                  autoComplete="email"
-                />
-              </div>
-              <div className="form-group">
-                <label htmlFor="password">Mot de passe d&apos;application</label>
-                <input
-                  id="password"
-                  type="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  placeholder="••••••••••••••••"
-                  required
-                  autoComplete="current-password"
-                />
-                <small className="form-hint">
-                  Pour Gmail : utilisez un mot de passe d&apos;application (Google Compte → Sécurité)
-                </small>
-              </div>
-              {error && (
-                <div className="modal-error">{error}</div>
-              )}
-              <button type="submit" className="modal-submit" disabled={loading}>
-                {loading ? (
-                  <>
-                    <span className="fetch-button-spinner" />
-                    Connexion...
-                  </>
-                ) : (
-                  'Se connecter et récupérer les mails'
-                )}
+          ) : (
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button 
+                onClick={handleScan} 
+                disabled={loading}
+                style={{ padding: '12px 24px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold' }}
+              >
+                {loading ? 'Analyse en cours...' : '🤖 Lancer le Scanner IA'}
               </button>
-            </form>
-          </div>
+              
+              <button 
+                onClick={handleLogout}
+                style={{ padding: '12px 24px', backgroundColor: '#dc3545', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+              >
+                Déconnexion
+              </button>
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* MAILS SECTION */}
+      {hasSearched && (
+        <div style={{ backgroundColor: 'white', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+          <h2 style={{ padding: '20px', margin: 0, borderBottom: '1px solid #eee', fontSize: '1.2rem' }}>
+            {mails.length} derniers messages trouvés
+          </h2>
+          
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+            <thead style={{ backgroundColor: '#f8f9fa' }}>
+              <tr>
+                <th style={{ padding: '15px' }}>Expéditeur</th>
+                <th style={{ padding: '15px' }}>Sujet</th>
+                <th style={{ padding: '15px' }}>Résumé</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mails.length > 0 ? mails.map(m => (
+                <tr key={m.id} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '15px', fontSize: '14px', fontWeight: '500' }}>{m.sender}</td>
+                  <td style={{ padding: '15px', fontSize: '14px' }}>{m.subject}</td>
+                  <td style={{ padding: '15px', fontSize: '13px', color: '#777' }}>{m.snippet}</td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan="3" style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Aucun mail trouvé.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       )}
-    </main>
+    </div>
   )
 }

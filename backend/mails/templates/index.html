@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Agent IA Mail</title>
+</head>
+<body>
+    <div id="root"></div>
+    {% if is_dev %}
+        <script type="module">
+          import RefreshRuntime from '{{ vite_url }}/@react-refresh'
+          RefreshRuntime.injectIntoGlobalHook(window)
+          window.$RefreshReg$ = () => {}
+          window.$RefreshSig$ = () => (type) => type
+          window.__vite_plugin_react_preamble_installed__ = true
+        </script>
+        <script type="module" src="{{ vite_url }}/@vite/client"></script>
+        <script type="module" src="{{ vite_url }}/src/main.jsx"></script>
+    {% else %}
+        <script type="module" src="/static/index.js"></script>
+    {% endif %}
+</body>
+</html>
