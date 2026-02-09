@@ -14,7 +14,6 @@ def index(request):
 
 
 def _get_credentials(request):
-    """Récupère les credentials depuis le body POST ou les variables d'environnement."""
     imap_host = os.getenv("IMAP_HOST", "imap.gmail.com")
     imap_email = os.getenv("IMAP_EMAIL")
     imap_password = os.getenv("IMAP_APP_PASSWORD")
@@ -29,7 +28,6 @@ def _get_credentials(request):
 
 
 def _scan_and_return_emails(imap_host, imap_email, imap_password):
-    """Connecte IMAP, récupère les 3 derniers mails non lus."""
     result = []
     with MailBox(imap_host).login(imap_email, imap_password) as mailbox:
         for msg in mailbox.fetch(AND(seen=False), reverse=True):

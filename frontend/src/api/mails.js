@@ -1,10 +1,5 @@
 import { getApiUrl } from './config.js';
 
-/**
- * Récupère les mails non lus depuis le backend Django (emails/scan/)
- * @param {Object} credentials - { email, password, host? }
- * @returns {Promise<Array>} Liste des mails
- */
 export async function getUnreadMails(credentials = {}) {
   const url = getApiUrl('/emails/scan/');
   const body = credentials.email && credentials.password
