@@ -1,0 +1,7 @@
+Django
+djangorestframework
+django-cors-headers
+google-auth-oauthlib
+google-api-python-client
+google-generativeai
+python-dotenv
