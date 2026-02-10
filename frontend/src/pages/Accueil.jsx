@@ -1,10 +1,21 @@
 import { useState, useEffect } from 'react'
+import ChatAssistant from '../components/ChatAssistant'
 
 export default function Accueil() {
   const [user, setUser] = useState(null)
   const [mails, setMails] = useState([])
   const [loading, setLoading] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
+  const [deletingIds, setDeletingIds] = useState([])
+
+  // Fermer le chat avec Escape
+  useEffect(() => {
+    if (!chatOpen) return
+    const onEscape = (e) => { if (e.key === 'Escape') setChatOpen(false) }
+    window.addEventListener('keydown', onEscape)
+    return () => window.removeEventListener('keydown', onEscape)
+  }, [chatOpen])
 
   // 1. Vérification de la session au chargement
   useEffect(() => {
@@ -18,11 +29,13 @@ export default function Accueil() {
       .catch(err => console.error("Erreur de session:", err))
   }, [])
 
+  const API_BASE = 'http://localhost:8000'
+
   // 2. Action : Scanner Gmail
   const handleScan = async () => {
     setLoading(true)
     try {
-      const res = await fetch('http://localhost:8000/api/gmail/scan/', { credentials: 'include' })
+      const res = await fetch(`${API_BASE}/api/gmail/scan/`, { credentials: 'include' })
       if (!res.ok) throw new Error("Erreur serveur")
       const data = await res.json()
       setMails(data)
@@ -35,19 +48,104 @@ export default function Accueil() {
     }
   }
 
+  // Supprimer un ou plusieurs mails (par ID) — les IDs Gmail sont des chaînes
+  const handleDeleteMails = async (ids) => {
+    const idList = Array.isArray(ids) ? ids.map(String) : [String(ids)]
+    if (!idList.length) return
+    setDeletingIds((prev) => [...prev, ...idList])
+    try {
+      const res = await fetch(`${API_BASE}/api/gmail/delete/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: idList }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.error || `Erreur ${res.status}`)
+      }
+      setMails((prev) => prev.filter((m) => !idList.includes(String(m.id))))
+    } catch (err) {
+      console.error("Erreur suppression:", err)
+      alert(err.message || "Impossible de supprimer le(s) mail(s).")
+    } finally {
+      setDeletingIds((prev) => prev.filter((id) => !idList.includes(id)))
+    }
+  }
+
+  const formatMailDate = (internalDate) => {
+    if (!internalDate) return ''
+    const d = new Date(Number(internalDate))
+    const now = new Date()
+    const diff = now - d
+    if (diff < 60000) return "À l'instant"
+    if (diff < 3600000) return `Il y a ${Math.floor(diff / 60000)} min`
+    if (diff < 86400000) return `Il y a ${Math.floor(diff / 3600000)} h`
+    return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
+  }
+
   // 3. Action : Déconnexion
-  const handleLogout = () => {
-    fetch('http://localhost:8000/api/auth/logout/', { 
-      method: 'POST', 
-      credentials: 'include' 
-    }).then(() => {
-        // On redirige vers l'accueil pour nettoyer l'état proprement
-        window.location.href = 'http://localhost:8000/';
-    })
+  const handleLogout = async () => {
+    try {
+      await fetch('http://localhost:8000/api/auth/logout/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(document.cookie.includes('csrftoken') && { 'X-CSRFToken': document.cookie.split('csrftoken=')[1]?.split(';')[0]?.trim() || '' }),
+        },
+      })
+    } finally {
+      // Réafficher tout de suite l’écran "reconnecter"
+      setUser(null)
+      setMails([])
+      setHasSearched(false)
+      setChatOpen(false)
+    }
   }
 
   return (
     <div className="container" style={{ maxWidth: '900px', margin: '0 auto', padding: '40px 20px' }}>
+      {/* Chat IA : affiché uniquement si connecté */}
+      {user && (
+        <>
+          <button
+            type="button"
+            className="chat-toggle"
+            onClick={() => setChatOpen(true)}
+            title="Ouvrir l’assistant IA"
+            aria-label="Ouvrir le chat"
+          >
+            💬
+          </button>
+          {chatOpen && (
+            <>
+              <div
+                className="chat-panel-overlay"
+                onClick={() => setChatOpen(false)}
+                role="button"
+                tabIndex={0}
+                aria-label="Fermer le chat"
+                onKeyDown={(e) => e.key === 'Escape' && setChatOpen(false)}
+              />
+              <div className="chat-panel">
+                <header className="chat-panel-header">
+                  <h2 className="chat-panel-title">Assistant IA</h2>
+                  <button
+                    type="button"
+                    className="chat-panel-close"
+                    onClick={() => setChatOpen(false)}
+                    aria-label="Fermer"
+                  >
+                    ×
+                  </button>
+                </header>
+                <ChatAssistant onUnauthorized={() => setUser(null)} />
+              </div>
+            </>
+          )}
+        </>
+      )}
       
       {/* HEADER SECTION */}
       <header style={{ textAlign: 'center', marginBottom: '40px' }}>
@@ -89,34 +187,37 @@ export default function Accueil() {
 
       {/* MAILS SECTION */}
       {hasSearched && (
-        <div style={{ backgroundColor: 'white', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
-          <h2 style={{ padding: '20px', margin: 0, borderBottom: '1px solid #eee', fontSize: '1.2rem' }}>
-            {mails.length} derniers messages trouvés
+        <section className="mails-section">
+          <h2 className="mails-list-title">
+            {mails.length} dernier{mails.length > 1 ? 's' : ''} message{mails.length > 1 ? 's' : ''} trouvé{mails.length > 1 ? 's' : ''}
           </h2>
-          
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-            <thead style={{ backgroundColor: '#f8f9fa' }}>
-              <tr>
-                <th style={{ padding: '15px' }}>Expéditeur</th>
-                <th style={{ padding: '15px' }}>Sujet</th>
-                <th style={{ padding: '15px' }}>Résumé</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mails.length > 0 ? mails.map(m => (
-                <tr key={m.id} style={{ borderBottom: '1px solid #eee' }}>
-                  <td style={{ padding: '15px', fontSize: '14px', fontWeight: '500' }}>{m.sender}</td>
-                  <td style={{ padding: '15px', fontSize: '14px' }}>{m.subject}</td>
-                  <td style={{ padding: '15px', fontSize: '13px', color: '#777' }}>{m.snippet}</td>
-                </tr>
-              )) : (
-                <tr>
-                  <td colSpan="3" style={{ padding: '40px', textAlign: 'center', color: '#999' }}>Aucun mail trouvé.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+          {mails.length > 0 ? (
+            <ul className="mails-items">
+              {mails.map((m) => (
+                <li key={m.id} className="mail-card">
+                  <div className="mail-header">
+                    <span className="mail-from">{m.sender}</span>
+                    <span className="mail-date">{formatMailDate(m.date)}</span>
+                    <button
+                      type="button"
+                      className="mail-delete-btn"
+                      onClick={() => handleDeleteMails([m.id])}
+                      disabled={deletingIds.includes(String(m.id))}
+                      title="Supprimer ce mail"
+                      aria-label="Supprimer"
+                    >
+                      {deletingIds.includes(String(m.id)) ? '…' : '🗑 Supprimer'}
+                    </button>
+                  </div>
+                  <div className="mail-subject">{m.subject || 'Sans objet'}</div>
+                  {m.snippet && <p className="mail-snippet">{m.snippet}</p>}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mails-empty">Aucun mail trouvé.</p>
+          )}
+        </section>
       )}
     </div>
   )
